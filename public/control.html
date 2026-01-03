@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>신청곡 컨트롤</title>
+<link rel="stylesheet" href="/style.css"/>
+<script src="/socket.io/socket.io.js"></script>
+<style>
+:root{
+  --accent:#FFC73A;
+  --currentBg: rgba(255,199,58,0.16);
+}
+body{
+  background:#121212;
+  color:#f5f5f5;
+  font-family:Pretendard, Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+.container{max-width:1080px;margin:0 auto;padding:16px}
+.card{
+  background:#1e1e1e;border:1px solid rgba(255,255,255,0.08);
+  border-radius:12px;padding:16px;margin-bottom:16px
+}
+.card h3{margin-bottom:8px;color:var(--accent)}
+.header .title{font-size:20px;font-weight:700}
+.meta.small{font-size:12px;color:rgba(255,255,255,0.5)}
+.controls{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+input,button{
+  padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);
+  background:#2b2b2b;color:#f5f5f5
+}
+input::placeholder{color:rgba(255,255,255,0.4)}
+button{cursor:pointer;background:#333;transition:background .2s}
+button:hover{background:#444}
+.section{margin-top:10px}
+.stack{display:flex;gap:8px;flex-wrap:wrap}
+.small{font-size:12px;color:rgba(255,255,255,0.5)}
+.preview{
+  margin-top:6px;display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 10px;
+  justify-content:center;align-content:flex-start
+}
+.preview .item{display:inline;white-space:nowrap;line-height:1.3}
+.preview .item::after{content:" /";opacity:.45;margin-left:2px}
+.preview .item:last-child::after{content:""}
+.preview .done{opacity:.45;text-decoration:line-through}
+.preview .current .title{background:var(--currentBg);border-radius:6px;padding:2px 6px;color:#fff}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="card">
+    <div class="header">
+      <div class="title">신청곡 컨트롤</div>
+      <div class="meta small">OBS에는 <span class="code">/overlay.html</span>을 브라우저 소스로 추가하세요.</div>
+    </div>
+
+    <div class="controls">
+      <div class="section">
+        <h3>추가</h3>
+        <div class="stack">
+          <input id="title" placeholder="곡 제목"/>
+          <button id="add" title="Enter">추가</button>
+        </div>
+      </div>
+      <div class="section">
+        <h3>현재 곡 제어</h3>
+        <div class="stack">
+          <button id="start" title="Ctrl+Enter">다음 곡 시작</button>
+          <button id="complete" title="Alt+C">완료</button>
+          <button id="skip" title="Alt+S">스킵</button>
+          <button id="undo" title="Alt+Z">되돌리기</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="section">
+        <h3>표시 설정</h3>
+        <div class="stack">
+          <label>신청곡 카운터 <input id="counter" type="number" value="3000" style="width:120px"/></label>
+          <button id="applyCfg">적용</button>
+        </div>
+      </div>
+      <div class="section">
+        <h3>전체</h3>
+        <div class="stack">
+          <button id="clear">전체 비우기</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>플레이리스트 미리보기</h3>
+      <div id="combined" class="preview"></div>
+      <div class="small" style="margin-top:6px">
+        단축키: Enter(추가) · Ctrl+Enter(다음곡) · Alt+C(완료) · Alt+S(스킵) · Alt+Z(되돌리기) · Esc(입력 지우기)
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const socket = io();
+function renderCombined(root, state){
+  root.innerHTML = '';
+  const currentArr = state.current ? [{...state.current, _status:'현재'}] : [];
+  const upcoming   = (state.upcoming || []).map(s => ({...s, _status:'대기'}));
+  const sung       = (state.sung || []).map(s => ({...s, _status:'완료'}));
+  const all = [...sung, ...currentArr, ...upcoming];
+  if (!all.length){ root.innerHTML = '<div class="small">없음</div>'; return; }
+  all.forEach(s => {
+    const div = document.createElement('span');
+    div.className = `item ${s._status==='완료'?'done':''} ${s._status==='현재'?'current':''}`;
+    div.innerHTML = `<span class="title">${s.title}</span>`;
+    root.appendChild(div);
+  });
+}
+socket.on('state', (state) => {
+  renderCombined(document.getElementById('combined'), state);
+  document.getElementById('counter').value = state.counter ?? 0;
+});
+function addSong(){
+  const title = document.getElementById('title').value.trim();
+  if(!title) return;
+  socket.emit('add-song', { title });
+  document.getElementById('title').value = '';
+  document.getElementById('title').focus();
+}
+document.getElementById('add').onclick = addSong;
+document.getElementById('start').onclick = () => socket.emit('start-next');
+document.getElementById('complete').onclick = () => socket.emit('complete-current');
+document.getElementById('skip').onclick = () => socket.emit('skip-current');
+
+// 되돌리기: ACK 폴백 (undo-last → 미응답 시 undo)
+function emitUndo(){
+  if (typeof socket.timeout === 'function') {
+    socket.timeout(700).emit('undo-last', (err) => { if (err) socket.emit('undo'); });
+  } else {
+    socket.emit('undo-last'); setTimeout(() => socket.emit('undo'), 700);
+  }
+}
+document.getElementById('undo').onclick = emitUndo;
+
+document.getElementById('clear').onclick = () => {
+  if (confirm('정말 전체 비우기?')) socket.emit('clear-all');
+};
+
+// 카운터 적용(→ 오버레이와 동기화)
+document.getElementById('applyCfg').onclick = () => {
+  const counter = Number(document.getElementById('counter').value);
+  socket.emit('set-counter', counter);
+};
+
+// 단축키
+window.addEventListener('keydown', (e) => {
+  const isTitleInput = document.activeElement.id === 'title';
+  if (e.key === 'Enter' && isTitleInput && !e.ctrlKey && !e.altKey){ e.preventDefault(); addSong(); return; }
+  if (e.key === 'Enter' && e.ctrlKey){ e.preventDefault(); socket.emit('start-next'); return; }
+  if (e.altKey && e.key.toLowerCase() === 'c'){ e.preventDefault(); socket.emit('complete-current'); return; }
+  if (e.altKey && e.key.toLowerCase() === 's'){ e.preventDefault(); socket.emit('skip-current'); return; }
+  if (e.altKey && e.key.toLowerCase() === 'z'){ e.preventDefault(); emitUndo(); return; }
+  if (e.key === 'Escape'){ e.preventDefault(); document.getElementById('title').value=''; return; }
+});
+</script>
+</body>
+</html>

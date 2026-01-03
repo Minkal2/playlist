@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>노래 신청 오버레이</title>
+<link rel="stylesheet" href="/style.css"/>
+<script src="/socket.io/socket.io.js"></script>
+<style>
+.small{font-size:12px;color:var(--muted)}
+
+/* 인라인 리스트: 가운데 정렬 + 크게 */
+.list{
+  margin-top: 6px;
+  display:flex; flex-wrap: wrap; align-items:baseline; justify-content:center;
+  align-content:flex-start; /* 가로 먼저 채움 */
+  gap: 8px 14px;
+  font-size: var(--listSize);
+}
+.item{display:inline; white-space:nowrap; line-height:1.35}
+.item .title{font-weight:800}
+.item::after{content:" /"; opacity:.45; margin-left:4px}
+.item:last-child::after{content:""} /* 마지막 슬래시 제거 */
+.item.done{opacity:.65; text-decoration:line-through}
+.item.current .title{
+  background: var(--currentBg); border-radius:8px; padding:2px 8px;
+}
+
+/* 헤더 중앙 정렬 */
+.header{
+  flex-direction:column; align-items:center; justify-content:center; text-align:center;
+}
+.header .title{ font-size: var(--titleSize); }
+
+/* pill 공통 */
+.pill{
+  display:inline-flex; align-items:center; justify-content:center;
+  padding:8px 14px; border-radius:999px; gap:6px;
+  font-weight:900; line-height:1;
+}
+.pill.fill{
+  background: var(--pillBg); color:#2d2d2d; border:1px solid rgba(0,0,0,0.03);
+}
+.pill.ghost{
+  background: rgba(255,255,255,0.35); color:#2d2d2d; border:1px solid var(--accent);
+}
+
+/* 진행/신청곡 행 */
+.metaRow{
+  display:flex; align-items:center; gap:12px; margin-top:6px;
+  font-size: calc(var(--listSize) * .85);
+  justify-content:center;
+}
+.pill.stat{ min-width:210px; }
+
+/* 브랜드 라벨 */
+.brandWrap{ display:flex; justify-content:center; margin-top:8px; }
+.brandTag{
+  font-size: calc(var(--listSize) * 1.25);
+  font-weight: 900;
+}
+.brandTag.wide{
+  padding-left: 56px;
+  padding-right: 56px;
+}
+.divider{height:12px;}
+</style>
+</head>
+<body>
+<div class="container center">
+  <div class="card fancy">
+    <!-- (3) 반투명 고양이 워터마크 -->
+    <svg class="wm-cat" viewBox="0 0 200 200" aria-hidden="true">
+      <circle cx="100" cy="118" r="70"/>
+      <polygon points="60,70 90,20 100,72"/>
+      <polygon points="140,70 110,20 100,72"/>
+      <line x1="70" y1="118" x2="35" y2="110" />
+      <line x1="70" y1="124" x2="35" y2="124" />
+      <line x1="70" y1="130" x2="35" y2="138" />
+      <line x1="130" y1="118" x2="165" y2="110" />
+      <line x1="130" y1="124" x2="165" y2="124" />
+      <line x1="130" y1="130" x2="165" y2="138" />
+    </svg>
+
+    <div class="header">
+      <div id="titleEl" class="title">PlayList💛</div>
+
+      <!-- 브랜드 라벨 -->
+      <div class="brandWrap" id="brandWrap">
+        <div id="brandTag" class="pill fill brandTag wide">겨울</div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- 진행 / 신청곡 -->
+    <div class="metaRow">
+      <div class="pill ghost stat">진행 <span id="progNow">0</span> / <span id="progTotal">0</span></div>
+      <div class="pill ghost stat">신청곡 <span id="counter">0</span></div>
+    </div>
+
+    <!-- 인라인 리스트 -->
+    <div class="list" id="oneList"></div>
+    <div class="footer small">＊ 완료된 곡은 회색 취소선으로 표시됩니다.</div>
+  </div>
+</div>
+
+<script>
+const socket = io();
+
+/* URL 파라미터로 테마/브랜딩 주입 (요청하신 유일 추가사항) */
+(function applyQueryTheme(){
+  const p = new URLSearchParams(location.search);
+  const root = document.documentElement;
+
+  const title = p.get('title');        // 헤더 타이틀 문구
+  const brand = p.get('brand');        // 브랜드 pill 텍스트
+  const accent = p.get('accent');      // #RRGGBB
+  const listSize = p.get('listSize');  // 예: 20px
+  const titleSize = p.get('titleSize');// 예: 40px
+  const wm = p.get('wm');              // 워터마크 opacity(0~0.2 권장)
+  const ring = p.get('ring');          // 노란 링 두께(px)
+  const showBrand = p.get('showBrand');// "0"이면 브랜드 숨김
+
+  if (title) document.getElementById('titleEl').textContent = title;
+  if (brand) document.getElementById('brandTag').textContent = brand;
+  if (showBrand === '0') document.getElementById('brandWrap').style.display = 'none';
+
+  if (accent) root.style.setProperty('--accent', accent);
+  if (listSize) root.style.setProperty('--listSize', listSize);
+  if (titleSize) root.style.setProperty('--titleSize', titleSize);
+  if (wm) root.style.setProperty('--wmOpacity', wm);
+  if (ring) root.style.setProperty('--ringW', `${parseInt(ring,10)||5}px`);
+})();
+
+function el(tag, attrs={}, ...children){
+  const node = document.createElement(tag);
+  Object.entries(attrs).forEach(([k,v]) => {
+    if (k === 'class') node.className = v;
+    else if (k === 'html') node.innerHTML = v;
+    else node.setAttribute(k, v);
+  });
+  children.forEach(c => node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c));
+  return node;
+}
+
+socket.on('state', (state) => {
+  // 신청곡 카운터
+  document.getElementById('counter').textContent = state.counter ?? 0;
+
+  // 진행/전체
+  const progNow = (state.sung?.length || 0) + (state.current ? 1 : 0);
+  const progTotal = (state.sung?.length || 0) + (state.upcoming?.length || 0) + (state.current ? 1 : 0);
+  document.getElementById('progNow').textContent = progNow;
+  document.getElementById('progTotal').textContent = progTotal;
+
+  // cap 사용 제거: 완료 -> 현재 -> 대기 전체 노출
+  const currentArr = state.current ? [{...state.current, _status:'current'}] : [];
+  const upcoming   = (state.upcoming || []).map(s => ({...s, _status:'pending'}));
+  const sung       = (state.sung || []).map(s => ({...s, _status:'done'}));
+  const all = [...sung, ...currentArr, ...upcoming];
+
+  // 렌더
+  const list = document.getElementById('oneList');
+  list.innerHTML = '';
+  if (!all.length){
+    list.appendChild(el('span', {class:'small'}, '표시할 항목이 없습니다.'));
+    return;
+  }
+
+  all.forEach(s => {
+    const item = el('span', {class:`item ${s._status==='done'?'done':''} ${s._status==='current'?'current':''}`},
+      el('span', {class:'title'}, s.title)
+    );
+    list.appendChild(item);
+  });
+});
+</script>
+</body>
+</html>
